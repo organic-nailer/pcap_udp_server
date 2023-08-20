@@ -1,3 +1,4 @@
+use std::io::Seek;
 use std::net::UdpSocket;
 use std::env;
 use std::fs::File;
@@ -5,20 +6,62 @@ use pcap_parser::*;
 use pcap_parser::traits::PcapReaderIterator;
 use spin_sleep;
 
+const SOURCE_ADDR: &str = "127.0.0.1:8081";
+
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        println!("Usage: {} <filename>", args[0]);
-        return;
+    let args = parse_args(&args);
+
+    let mut file = File::open(args.input).unwrap();
+
+    let dest_addr = if let Some(port) = args.port {
+        format!("255.255.255.255:{}", port)
+    } else {
+        format!("255.255.255.255:8080")
+    };
+    println!("UDP broadcast {} -> {}", SOURCE_ADDR, dest_addr);
+
+    let sender = UdpSender::new(dest_addr);
+
+    if args.repeat {
+        loop {
+            file.seek(std::io::SeekFrom::Start(0)).unwrap();
+            let reader = LegacyPcapReader::new(65536, &mut file).unwrap();
+            play(&sender, reader);
+        }
+    } else {
+        let reader = LegacyPcapReader::new(65536, &mut file).unwrap();
+        play(&sender, reader);
     }
+}
 
-    let filename = &args[1];
-    let mut file = File::open(filename).unwrap();
-    let mut reader = LegacyPcapReader::new(65536, &mut file).unwrap();
+pub struct Args {
+    input: String,
+    port: Option<u16>,
+    repeat: bool,
+}
 
-    let sock = UdpSocket::bind("127.0.0.1:8081").unwrap();
-    sock.set_broadcast(true).unwrap();
+pub fn parse_args(args: &Vec<String>) -> Args {
+    let mut opts = getopts::Options::new();
+    opts.optopt("p", "port", "port number", "PORT");
+    opts.optflag("r", "repeat", "repeat");
+    let matches = opts.parse(&args[1..]).unwrap();
+    let input = if !matches.free.is_empty() {
+        matches.free[0].clone()
+    } else {
+        println!("Usage: {} <filename>", args[0]);
+        std::process::exit(1);
+    };
+    let port = matches.opt_str("p").map(|s| s.parse().unwrap());
+    let repeat = matches.opt_present("r");
+    Args {
+        input,
+        port,
+        repeat,
+    }
+}
 
+fn play(sender: &UdpSender, mut reader: LegacyPcapReader<&mut File>) {
     let mut num_packets = 0;
     let start = std::time::Instant::now();
     let mut time_offset: Option<i64> = None;
@@ -54,7 +97,7 @@ fn main() {
                                 println!("running late {}: {}us", num_packets, wait_us);
                             }
                         }
-                        sock.send_to(udp_data, "255.255.255.255:8080").unwrap();
+                        sender.send(udp_data);
                         
                         num_packets += 1;
                     },
@@ -69,6 +112,25 @@ fn main() {
             Err(err) => panic!("packet read failed: {:?}", err),
         }    
     }
-    println!("num_packets: {}", num_packets);
-    println!("elapsed: {} ms", start.elapsed().as_millis());
+    println!("{} packets in {}sec", num_packets, start.elapsed().as_secs_f32());
+}
+
+struct UdpSender {
+    sock: UdpSocket,
+    dest_addr: String,
+}
+
+impl UdpSender {
+    fn new(dest_addr: String) -> Self {
+        let sock = UdpSocket::bind(SOURCE_ADDR).unwrap();
+        sock.set_broadcast(true).unwrap();
+        Self {
+            sock,
+            dest_addr,
+        }
+    }
+
+    fn send(&self, data: &[u8]) {
+        self.sock.send_to(data, &self.dest_addr).unwrap();
+    }
 }

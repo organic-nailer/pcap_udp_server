@@ -35,15 +35,20 @@ pub struct Args {
     repeat: bool,
 }
 
-pub fn parse_args(args: &Vec<String>) -> Args {
+pub fn parse_args(command_prefix: &str, args: &Vec<String>) -> Args {
     let mut opts = getopts::Options::new();
     opts.optopt("p", "port", "port number", "PORT");
     opts.optflag("r", "repeat", "repeat");
-    let matches = opts.parse(&args[1..]).unwrap();
+    opts.optflag("h", "help", "print this help menu");
+    let matches = opts.parse(args).unwrap();
+    if matches.opt_present("h") {
+        println!("{}", opts.usage(format!("Usage: {} [options] <input>", command_prefix).as_str()));
+        std::process::exit(0);
+    }
     let input = if !matches.free.is_empty() {
         matches.free[0].clone()
     } else {
-        println!("Usage: {} <filename>", args[0]);
+        println!("{}", opts.usage(format!("Usage: {} [options] <input>", command_prefix).as_str()));
         std::process::exit(1);
     };
     let port = matches.opt_str("p").map(|s| s.parse().unwrap());

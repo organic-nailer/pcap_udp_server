@@ -40,6 +40,10 @@ pub fn parse_args(command_prefix: &str, args: &Vec<String>) -> Args {
     opts.optopt("p", "port", "port number", "PORT");
     opts.optflag("r", "repeat", "repeat");
     opts.optflag("h", "help", "print this help menu");
+    if args.len() < 2 {
+        println!("{}", opts.usage(format!("Usage: {} [options] <input>", command_prefix).as_str()));
+        std::process::exit(0);
+    }
     let matches = opts.parse(&args[1..]).unwrap();
     if matches.opt_present("h") {
         println!("{}", opts.usage(format!("Usage: {} [options] <input>", command_prefix).as_str()));
